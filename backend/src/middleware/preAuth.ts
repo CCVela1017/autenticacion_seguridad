@@ -16,11 +16,11 @@ export function verifyPreAuth(req: PreAuthRequest, res: Response, next: NextFunc
   try {
     const secret = process.env.JWT_SECRET;
     if (!secret) {
-      throw new Error('JWT_SECRET no esta configurado');
+      throw new Error('No hay codigo secreto para verificar el token');
     }
     const payload = jwt.verify(token!, secret)! as { userId: number; stage: string };
     if (payload.stage !== 'password_ok') {
-      return res.status(401).json({ error: 'Token inválido para esta etapa' });
+      return res.status(401).json({ error: 'Token invalido para esta etapa' });
     }
 
     req.userId = payload.userId;
