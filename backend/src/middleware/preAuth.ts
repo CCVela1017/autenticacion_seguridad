@@ -16,7 +16,7 @@ export function verifyPreAuth(req: PreAuthRequest, res: Response, next: NextFunc
   try {
     const secret = process.env.JWT_SECRET;
     if (!secret) {
-      throw new Error('No hay codigo secreto para verificar el token');
+      return res.status(500).json({ error: 'Variables no configuradas' });
     }
     const payload = jwt.verify(token!, secret)! as { userId: number; stage: string };
     if (payload.stage !== 'password_ok') {

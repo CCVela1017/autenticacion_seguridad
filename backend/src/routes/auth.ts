@@ -110,4 +110,13 @@ router.post('/totp/verify', verifyPreAuth, (req: PreAuthRequest, res: Response) 
   res.json({ token: finalToken });
 });
 
+router.get('/get-role', verifyPreAuth, (req: PreAuthRequest, res: Response) => {
+  const userId = req.userId!;
+  const user = db.prepare('SELECT role FROM users WHERE id = ?').get(userId) as { role: string | null } | undefined;
+
+  if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
+
+  res.json({ role: user.role });
+});1
+
 export default router;
