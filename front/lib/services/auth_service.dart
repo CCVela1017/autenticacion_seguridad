@@ -3,59 +3,183 @@ import 'package:http/http.dart' as http;
 
 class AuthService {
 
-  final String baseUrl = 'http://localhost:8000/api'; 
-
+  final String baseUrl = 'http://192.168.0.3:8000/auth';
 
   Future<Map<String, dynamic>> identifyUser(String identifier) async {
     try {
+      
+      
       final response = await http.post(
-        Uri.parse('$baseUrl/identify/'),
+        Uri.parse('$baseUrl/identify'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'identifier': identifier}),
       );
 
+     
+
       if (response.statusCode == 200) {
-        return jsonDecode(response.body); 
+        return jsonDecode(response.body);
       } else {
-        return {'exists': false, 'message': 'Usuario no encontrado'};
+        return {'exists': false};
       }
     } catch (e) {
-      if (identifier == 'admin123' || identifier == 'user456') {
-        return {'exists': true, 'name': identifier == 'admin123' ? 'Carlos Admin' : 'Ana Estudiante'};
-      }
-      return {'exists': false, 'message': 'Error de conexión con el servidor'};
+      return {'exists': false};
     }
   }
 
+  Future<Map<String, dynamic>> loginPassword({
+    required String username,
+    required String password,
+  }) async {
+    try {
+     
+      
+      final response = await http.post(
+        Uri.parse('$baseUrl/login-password'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'username': username, 'password': password}),
+      );
+
+
+      final data = jsonDecode(response.body);
+
+      if (response.statusCode == 200) {
+        return {
+          'success': true,
+          'preAuthToken': data['preAuthToken'],
+          'needsTotpSetup': data['needsTotpSetup'],
+        };
+      } else {
+        return {'success': false, 'error': data['error'] ?? 'Credenciales inválidas'};
+      }
+    } catch (e) {
+      return {'success': false, 'error': 'Error de conexión: $e'};
+    }
+  }
+
+
   Future<Map<String, dynamic>> authenticateUser({
     required String identifier,
-    String? password,
-    String? otpCode,
-    bool? biometricVerified,
+    required String password,
+    required String otpCode,
+    required bool biometricVerified,
   }) async {
     try {
       final response = await http.post(
-        Uri.parse('$baseUrl/authenticate/'),
+        Uri.parse('$baseUrl/authenticate'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'identifier': identifier,
           'password': password,
-          'otp_code': otpCode,
-          'biometric_verified': biometricVerified,
+          'otpCode': otpCode,
+          'biometricVerified': biometricVerified,
         }),
       );
 
-      if (response.statusCode == 200) {
-        return jsonDecode(response.body); 
+      final data = jsonDecode(response.body);
+
+      if (response.statusCode == 200 && data['success'] == true) {
+        return {'success': true, 'role': data['role'], 'token': data['token']};
       } else {
-        return {'success': false, 'message': 'Credenciales o factores incorrectos'};
+        return {'success': false};
       }
     } catch (e) {
-      if (password == 'Admin123*' || otpCode == '9999' || otpCode == '1234' || biometricVerified == true) {
-        String role = identifier == 'admin123' ? 'Administrador' : 'Usuario';
-        return {'success': true, 'role': role};
+      return {'success': false};
+    }
+  }
+
+  
+  Future<Map<String, dynamic>> registerUser({
+    required String username,
+    required String password,
+    required String role,
+  }) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/register'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'username': username,
+          'password': password,
+          'role': role,
+        }),
+      );
+
+      if (response.statusCode == 201) {
+        return {'success': true, 'message': 'Usuario creado con éxito'};
+      } else {
+        final data = jsonDecode(response.body);
+        return {'success': false, 'error': data['error'] ?? 'Error al registrar'};
       }
-      return {'success': false, 'message': 'Fallo en la validación de factores'};
+    } catch (e) {
+      return {'success': false, 'error': 'Error de conexión: $e'};
+    }
+  }
+
+  
+  Future<Map<String, dynamic>> setupTotp(String preAuthToken) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/totp/setup'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $preAuthToken',
+        },
+      );
+
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body);
+      } else {
+        return {'error': 'No se pudo generar el código QR'};
+      }
+    } catch (e) {
+      return {'error': 'Error de conexión: $e'};
+    }
+  }
+
+
+  Future<Map<String, dynamic>> confirmTotp(String preAuthToken, String code) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/totp/confirm'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $preAuthToken',
+        },
+        body: jsonEncode({'code': code}),
+      );
+
+      final data = jsonDecode(response.body);
+      if (response.statusCode == 200) {
+        return {'success': true, 'token': data['token']};
+      } else {
+        return {'success': false, 'error': data['error'] ?? 'Código inválido'};
+      }
+    } catch (e) {
+      return {'success': false, 'error': 'Error de conexión: $e'};
+    }
+  }
+
+
+  Future<Map<String, dynamic>> verifyLoginTotp(String preAuthToken, String code) async {
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/totp/verify'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $preAuthToken',
+        },
+        body: jsonEncode({'code': code}),
+      );
+
+      final data = jsonDecode(response.body);
+      if (response.statusCode == 200) {
+        return {'success': true, 'token': data['token']};
+      } else {
+        return {'success': false, 'error': data['error'] ?? 'Código inválido'};
+      }
+    } catch (e) {
+      return {'success': false, 'error': 'Error de conexión: $e'};
     }
   }
 }

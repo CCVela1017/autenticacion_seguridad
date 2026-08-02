@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'dart:ui';
 import 'package:local_auth/local_auth.dart';
 import 'package:autenticacion_seguridad/services/auth_service.dart';
+import 'register_screen.dart';
+import 'totp_setup_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -14,7 +16,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final AuthService _authService = AuthService();
   final LocalAuthentication _localAuth = LocalAuthentication();
 
-  int _currentStep = 1;
+  int _currentStep = 1; 
 
   final TextEditingController _idController = TextEditingController();
   final TextEditingController _passController = TextEditingController();
@@ -24,7 +26,10 @@ class _LoginScreenState extends State<LoginScreen> {
   String _userName = '';
   String _errorMessage = '';
   bool _isLoading = false;
-  bool _biometricVerified = false;
+  
+  String? _preAuthToken;
+  bool _needsTotpSetup = false;
+
 
   Future<void> _verifyIdentity() async {
     setState(() {
@@ -39,12 +44,86 @@ class _LoginScreenState extends State<LoginScreen> {
       _isLoading = false;
       if (result['exists'] == true) {
         _userName = result['name'] ?? 'Usuario';
-        _currentStep = 2;
+        _currentStep = 2; // Pasa a Contraseña
       } else {
         _errorMessage = 'Usuario inexistente en el sistema.';
       }
     });
   }
+
+
+  Future<void> _verifyPassword() async {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = '';
+    });
+
+    final passwordLoginResult = await _authService.loginPassword(
+      username: _idController.text.trim(),
+      password: _passController.text,
+    );
+
+    setState(() {
+      _isLoading = false;
+    });
+
+    if (!passwordLoginResult['success']) {
+      setState(() {
+        _errorMessage = passwordLoginResult['error'] ?? 'Contraseña incorrecta.';
+      });
+      return;
+    }
+
+    _preAuthToken = passwordLoginResult['preAuthToken'];
+    _needsTotpSetup = passwordLoginResult['needsTotpSetup'] ?? false;
+
+    if (_needsTotpSetup) {
+      final bool? setupCompleted = await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => TotpSetupScreen(preAuthToken: _preAuthToken!),
+        ),
+      );
+
+      if (setupCompleted != true) {
+        setState(() {
+          _errorMessage = 'Debe configurar el código TOTP para continuar.';
+        });
+        return;
+      }
+    }
+
+
+    setState(() {
+      _currentStep = 3;
+    });
+  }
+
+
+  Future<void> _verifyTotpCode() async {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = '';
+    });
+
+    Map<String, dynamic> result;
+    if (_needsTotpSetup) {
+      result = await _authService.confirmTotp(_preAuthToken!, _pinController.text.trim());
+    } else {
+      result = await _authService.verifyLoginTotp(_preAuthToken!, _pinController.text.trim());
+    }
+
+    setState(() {
+      _isLoading = false;
+      if (result['success'] == true) {
+
+        _currentStep = 4;
+      } else {
+        _errorMessage = result['error'] ?? 'Código TOTP inválido.';
+      }
+    });
+  }
+
 
   Future<void> _authenticateBiometrics() async {
     try {
@@ -59,57 +138,44 @@ class _LoginScreenState extends State<LoginScreen> {
       }
 
       bool didAuthenticate = await _localAuth.authenticate(
-        localizedReason: 'Por favor, autentícate para continuar',
+        localizedReason: 'Autentíquese para finalizar el acceso',
         options: const AuthenticationOptions(
           biometricOnly: true,
           stickyAuth: true,
         ),
       );
 
-      setState(() {
-        _biometricVerified = didAuthenticate;
-        if (!didAuthenticate) {
+      if (didAuthenticate) {
+        setState(() {
+          _isLoading = true;
+        });
+
+        final roleResult = await _authService.authenticateUser(
+          identifier: _idController.text.trim(),
+          password: _passController.text,
+          otpCode: _pinController.text.trim(),
+          biometricVerified: true,
+        );
+
+        setState(() {
+          _isLoading = false;
+          if (roleResult['success'] == true) {
+            _userRole = roleResult['role'] ?? 'Usuario';
+            _currentStep = 5; 
+          } else {
+            _errorMessage = 'Error al finalizar la sesión en el servidor.';
+          }
+        });
+      } else {
+        setState(() {
           _errorMessage = 'Autenticación biométrica cancelada o fallida.';
-        } else {
-          _errorMessage = '';
-        }
-      });
+        });
+      }
     } catch (e) {
       setState(() {
         _errorMessage = 'Error en biometría: $e';
       });
     }
-  }
-
-  Future<void> _authenticateAllFactors() async {
-    if (!_biometricVerified) {
-      setState(() {
-        _errorMessage = 'Debe verificar su biometría (Face ID / Huella) antes de ingresar.';
-      });
-      return;
-    }
-
-    setState(() {
-      _isLoading = true;
-      _errorMessage = '';
-    });
-
-    final result = await _authService.authenticateUser(
-      identifier: _idController.text.trim(),
-      password: _passController.text,
-      otpCode: _pinController.text.trim(),
-      biometricVerified: _biometricVerified,
-    );
-
-    setState(() {
-      _isLoading = false;
-      if (result['success'] == true) {
-        _userRole = result['role'] ?? 'Usuario';
-        _currentStep = 3;
-      } else {
-        _errorMessage = 'Autenticación fallida: Verifique contraseña, PIN o biometría.';
-      }
-    });
   }
 
   void _logout() {
@@ -121,15 +187,15 @@ class _LoginScreenState extends State<LoginScreen> {
       _userRole = '';
       _userName = '';
       _errorMessage = '';
-      _biometricVerified = false;
+      _preAuthToken = null;
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    final Color primaryColor = Colors.deepPurple;
-    final Color secondaryColor = Colors.purpleAccent;
-    final Color bgColor = const Color(0xFFF3F4F6);
+    const Color primaryColor = Colors.deepPurple;
+    const Color secondaryColor = Colors.purpleAccent;
+    const Color bgColor = Color(0xFFF3F4F6);
 
     return Scaffold(
       body: Stack(
@@ -180,9 +246,9 @@ class _LoginScreenState extends State<LoginScreen> {
                           children: [
                             const Icon(Icons.lock_outline, size: 70, color: Colors.deepPurple),
                             const SizedBox(height: 15),
-                            const Text(
-                              'Inicio de Sesión',
-                              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.black87),
+                            Text(
+                              _currentStep == 5 ? '¡Bienvenido!' : 'Inicio de Sesión (Paso $_currentStep de 4)',
+                              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.black87),
                             ),
                             const SizedBox(height: 25),
 
@@ -220,47 +286,69 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Widget _buildStepContent() {
     switch (_currentStep) {
-      case 1:
+      case 1: 
         return Column(
           children: [
             _customTextField(_idController, 'Usuario, Correo o Carnet', Icons.person_outline),
             const SizedBox(height: 25),
             _actionButton('Siguiente', _verifyIdentity),
+            const SizedBox(height: 15),
+            TextButton(
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const RegisterView()),
+                );
+              },
+              child: const Text(
+                '¿No tienes cuenta? Regístrate aquí',
+                style: TextStyle(color: Colors.deepPurple, fontWeight: FontWeight.bold),
+              ),
+            ),
           ],
         );
-      case 2:
+      case 2: 
         return Column(
           children: [
-            Text('Bienvenido, $_userName', style: const TextStyle(color: Colors.black54, fontWeight: FontWeight.bold)),
+            Text('Hola, $_userName', style: const TextStyle(color: Colors.black54, fontWeight: FontWeight.bold, fontSize: 16)),
             const SizedBox(height: 15),
             _customTextField(_passController, 'Contraseña', Icons.lock_outline, obscure: true),
+            const SizedBox(height: 25),
+            _actionButton('Continuar', _verifyPassword),
+          ],
+        );
+      case 3: 
+        return Column(
+          children: [
+            const Text('Ingresa el código de Google Authenticator', style: TextStyle(color: Colors.black54, fontSize: 13), textAlign: TextAlign.center),
             const SizedBox(height: 15),
-            _customTextField(_pinController, 'PIN de seguridad', Icons.pin, obscure: true, numeric: true),
-            const SizedBox(height: 15),
+            _customTextField(_pinController, 'PIN de seguridad (TOTP)', Icons.pin, obscure: true, numeric: true),
+            const SizedBox(height: 25),
+            _actionButton('Verificar Código', _verifyTotpCode),
+          ],
+        );
+      case 4: 
+        return Column(
+          children: [
+            const Text('Confirma tu identidad con biometría', style: TextStyle(color: Colors.black54, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 20),
             SizedBox(
               width: double.infinity,
-              height: 45,
-              child: OutlinedButton.icon(
-                style: OutlinedButton.styleFrom(
-                  side: BorderSide(color: _biometricVerified ? Colors.green : Colors.deepPurple),
+              height: 50,
+              child: ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.deepPurple,
+                  foregroundColor: Colors.white,
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
                 ),
                 onPressed: _authenticateBiometrics,
-                icon: Icon(
-                  _biometricVerified ? Icons.check_circle : Icons.fingerprint,
-                  color: _biometricVerified ? Colors.green : Colors.deepPurple,
-                ),
-                label: Text(
-                  _biometricVerified ? 'Biometría verificada' : 'Escanear Huella / Face ID',
-                  style: TextStyle(color: _biometricVerified ? Colors.green : Colors.deepPurple, fontWeight: FontWeight.bold),
-                ),
+                icon: const Icon(Icons.fingerprint),
+                label: const Text('Escanear Huella / Face ID', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
               ),
             ),
-            const SizedBox(height: 25),
-            _actionButton('Autenticar', _authenticateAllFactors),
           ],
         );
-      case 3:
+      case 5: // Éxito
         return Column(
           children: [
             const Icon(Icons.verified_user, size: 70, color: Colors.green),
@@ -293,7 +381,7 @@ class _LoginScreenState extends State<LoginScreen> {
         style: const TextStyle(color: Colors.black87),
         decoration: InputDecoration(
           labelText: label,
-          labelStyle: TextStyle(color: Colors.black54),
+          labelStyle: const TextStyle(color: Colors.black54),
           border: InputBorder.none,
           prefixIcon: Icon(icon, color: Colors.black54),
           contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
