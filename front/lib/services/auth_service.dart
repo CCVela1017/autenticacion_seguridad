@@ -3,7 +3,7 @@ import 'package:http/http.dart' as http;
 
 class AuthService {
 
-  final String baseUrl = 'http://192.168.0.3:8000/auth';
+  final String baseUrl = 'https://autenticacion-app-zjuo.onrender.com/auth';
 
   Future<Map<String, dynamic>> identifyUser(String identifier) async {
     try {
