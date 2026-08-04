@@ -29,6 +29,14 @@ router.post('/register', async (req: Request<{}, {}, RegisterBody>, res: Respons
     return res.status(400).json({ error: 'Faltan campos' });
   }
 
+  const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&._-]).{8,}$/;
+  
+  if (!passwordRegex.test(password)) {
+    return res.status(400).json({ 
+      error: 'La contraseña debe tener al menos 8 caracteres, incluir una mayúscula, una minúscula, un número y un carácter especial (@$!%*?&._-)' 
+    });
+  }
+
   const exists = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
   if (exists) return res.status(409).json({ error: 'Usuario ya existe' });
 
@@ -56,7 +64,7 @@ router.post('/login-password', async (req: Request<{}, {}, RegisterBody>, res: R
   res.json({ preAuthToken, needsTotpSetup: !user.totp_confirmed });
 });
 
-// configuracion de TOTP por primera vez
+
 router.post('/totp/setup', verifyPreAuth, async (req: PreAuthRequest, res: Response) => {
   const userId = req.userId!;
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as User;
@@ -117,6 +125,60 @@ router.get('/get-role', verifyPreAuth, (req: PreAuthRequest, res: Response) => {
   if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
 
   res.json({ role: user.role });
-});1
+});
+
+
+router.post('/identify', (req: Request, res: Response) => {
+  const { identifier } = req.body;
+  
+  if (!identifier) {
+    return res.status(400).json({ error: 'Falta el identificador' });
+  }
+
+  const user = db.prepare('SELECT username FROM users WHERE username = ?').get(identifier) as { username: string } | undefined;
+
+  if (user) {
+    return res.json({ exists: true, name: user.username });
+  } else {
+    return res.status(404).json({ exists: false, error: 'Usuario inexistente' });
+  }
+});
+
+router.post('/authenticate', async (req: Request, res: Response) => {
+  const { identifier, password, otpCode, biometricVerified } = req.body;
+  
+  console.log('>>> INTENTO DE AUTENTICACIÓN FINAL PARA:', identifier);
+  console.log('>>> OTP RECIBIDO:', otpCode);
+  console.log('>>> BIOMETRÍA:', biometricVerified);
+
+  const user = db.prepare('SELECT * FROM users WHERE username = ?').get(identifier) as User | undefined;
+  if (!user) {
+    console.log('>>> ERROR: Usuario no encontrado');
+    return res.status(401).json({ success: false, error: 'Usuario no encontrado' });
+  }
+
+
+  const match = await bcrypt.compare(password, user.password_hash);
+  if (!match) {
+    console.log('>>> ERROR: Contraseña incorrecta');
+    return res.status(401).json({ success: false, error: 'Contraseña incorrecta' });
+  }
+
+
+  const valid = verify({ token: otpCode, secret: user.totp_secret! });
+  console.log('>>> ¿ES VÁLIDO EL TOTP?:', valid);
+  if (!valid) {
+    console.log('>>> ERROR: Código TOTP inválido');
+    return res.status(401).json({ success: false, error: 'Código TOTP inválido' });
+  }
+
+  const token = jwt.sign(
+    { userId: user.id, stage: 'full_auth' },
+    process.env.JWT_SECRET as string,
+    { expiresIn: '2h' }
+  );
+
+  res.json({ success: true, role: user.role, token });
+});
 
 export default router;
