@@ -78,14 +78,14 @@ router.post('/totp/setup', verifyPreAuth, async (req: PreAuthRequest, res: Respo
   res.json({ qrCodeDataUrl, secret });
 });
 
-
-router.post('/totp/confirm', verifyPreAuth, (req: PreAuthRequest, res: Response) => {
+// confirmacion de TOTP por primera vez
+router.post('/totp/confirm', verifyPreAuth, async (req: PreAuthRequest, res: Response) => {
   const { code } = req.body;
   const userId = req.userId!;
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as User;
 
-  const valid = verify({ token: code, secret: user.totp_secret! });
-  if (!valid) return res.status(401).json({ error: 'Codigo invalido' });
+  const result = await verify({ token: code, secret: user.totp_secret! });
+  if (!result.valid) return res.status(401).json({ error: 'Codigo invalido' });
 
   db.prepare('UPDATE users SET totp_confirmed = 1 WHERE id = ?').run(userId);
 
@@ -97,8 +97,8 @@ router.post('/totp/confirm', verifyPreAuth, (req: PreAuthRequest, res: Response)
   res.json({ token: finalToken });
 });
 
-
-router.post('/totp/verify', verifyPreAuth, (req: PreAuthRequest, res: Response) => {
+// validacion TOTP login normal
+router.post('/totp/verify', verifyPreAuth, async (req: PreAuthRequest, res: Response) => {
   const { code } = req.body;
   const userId = req.userId!;
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as User;
@@ -107,8 +107,8 @@ router.post('/totp/verify', verifyPreAuth, (req: PreAuthRequest, res: Response) 
     return res.status(400).json({ error: 'TOTP no configurado' });
   }
 
-  const valid = verify({ token: code, secret: user.totp_secret });
-  if (!valid) return res.status(401).json({ error: 'Codigo invalido' });
+  const result = await verify({ token: code, secret: user.totp_secret });
+  if (!result.valid) return res.status(401).json({ error: 'Codigo invalido' });
 
   const finalToken = jwt.sign(
     { userId, stage: 'full_auth' },
